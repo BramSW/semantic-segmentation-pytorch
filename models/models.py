@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torchvision
-from . import resnet, resnext, mobilenet
+from . import resnet, resnext, mobilenet, ptresnet
+from .ptresnet import PTResNet
 from lib.nn import SynchronizedBatchNorm2d
 
 
@@ -29,10 +30,12 @@ class SegmentationModule(SegmentationModuleBase):
     def forward(self, feed_dict, *, segSize=None):
         # training
         if segSize is None:
-            if self.deep_sup_scale is not None: # use deep supervision technique
-                (pred, pred_deepsup) = self.decoder(self.encoder(feed_dict['img_data'], return_feature_maps=True))
+            if self.deep_sup_scale is not None:  # use deep supervision technique
+                (pred, pred_deepsup) = self.decoder(self.encoder(
+                    feed_dict['img_data'], return_feature_maps=True))
             else:
-                pred = self.decoder(self.encoder(feed_dict['img_data'], return_feature_maps=True))
+                pred = self.decoder(self.encoder(
+                    feed_dict['img_data'], return_feature_maps=True))
 
             loss = self.crit(pred, feed_dict['seg_label'])
             if self.deep_sup_scale is not None:
@@ -43,7 +46,8 @@ class SegmentationModule(SegmentationModuleBase):
             return loss, acc
         # inference
         else:
-            pred = self.decoder(self.encoder(feed_dict['img_data'], return_feature_maps=True), segSize=segSize)
+            pred = self.decoder(self.encoder(
+                feed_dict['img_data'], return_feature_maps=True), segSize=segSize)
             return pred
 
 
@@ -70,14 +74,22 @@ class ModelBuilder():
         elif classname.find('BatchNorm') != -1:
             m.weight.data.fill_(1.)
             m.bias.data.fill_(1e-4)
-        #elif classname.find('Linear') != -1:
+        # elif classname.find('Linear') != -1:
         #    m.weight.data.normal_(0.0, 0.0001)
 
-    def build_encoder(self, arch='resnet50dilated', fc_dim=512, weights=''):
-        pretrained = True if len(weights) == 0 else False
+    def build_encoder(self, arch='resnet50dilated', fc_dim=512, weights='',
+                      freeze_until=None):
+        # pretrained = True if len(weights) == 0 else False
+        pretrained = False
+        if freeze_until is not None:
+            assert arch == 'ptresnet50dilated', "Freezing is only implemented for PyTorch model def"
+            assert freeze_until in ['layer4', 'layer3']
+        if len(weights) == 0:
+            print('TRAINING FROM SCRATCH')
         arch = arch.lower()
         if arch == 'mobilenetv2dilated':
-            orig_mobilenet = mobilenet.__dict__['mobilenetv2'](pretrained=pretrained)
+            orig_mobilenet = mobilenet.__dict__[
+                'mobilenetv2'](pretrained=pretrained)
             net_encoder = MobileNetV2Dilated(orig_mobilenet, dilate_scale=8)
         elif arch == 'resnet18':
             orig_resnet = resnet.__dict__['resnet18'](pretrained=pretrained)
@@ -99,6 +111,13 @@ class ModelBuilder():
         elif arch == 'resnet50dilated':
             orig_resnet = resnet.__dict__['resnet50'](pretrained=pretrained)
             net_encoder = ResnetDilated(orig_resnet, dilate_scale=8)
+        elif arch == 'ptresnet50':
+            orig_resnet = ptresnet.__dict__['ptresnet50'](pretrained=pretrained)
+            net_encoder = Resnet(orig_resnet)
+        elif arch == 'ptresnet50dilated':
+            orig_resnet = ptresnet.__dict__['ptresnet50'](pretrained=pretrained, freeze_until=freeze_until)
+            net_encoder = ResnetDilated(
+                orig_resnet, dilate_scale=8, freeze_until=freeze_until)
         elif arch == 'resnet101':
             orig_resnet = resnet.__dict__['resnet101'](pretrained=pretrained)
             net_encoder = Resnet(orig_resnet)
@@ -106,23 +125,42 @@ class ModelBuilder():
             orig_resnet = resnet.__dict__['resnet101'](pretrained=pretrained)
             net_encoder = ResnetDilated(orig_resnet, dilate_scale=8)
         elif arch == 'resnext101':
-            orig_resnext = resnext.__dict__['resnext101'](pretrained=pretrained)
-            net_encoder = Resnet(orig_resnext) # we can still use class Resnet
+            orig_resnext = resnext.__dict__[
+                'resnext101'](pretrained=pretrained)
+            net_encoder = Resnet(orig_resnext)  # we can still use class Resnet
         else:
             raise Exception('Architecture undefined!')
 
-        # net_encoder.apply(self.weights_init)
+#net_encoder.apply(self.weights_init)
+
+        if freeze_until is not None:
+            if freeze_until.startswith('layer'):
+                net_encoder.conv1.weight.requires_grad = False
+                done_freeze = False
+                for idx in range(1, 5):
+                    layername = 'layer%d' % (idx)
+                    if layername == freeze_until:
+                        done_freeze = True
+                    layermod = getattr(net_encoder, layername)
+                    print("==========Freezing params of layer: %s" % (layername))
+                    for name, m in layermod.named_parameters():
+                        print('param', name)
+                        m.requires_grad = False
+                    if done_freeze:
+                        break
         if len(weights) > 0:
             print('Loading weights for net_encoder')
-            net_encoder.load_state_dict(
-                torch.load(weights, map_location=lambda storage, loc: storage), strict=False)
+            state_dict = torch.load(weights, map_location=lambda storage, loc: storage)
+            # call the partial state dict loading function
+            # handle the special ab channels in the colorization model
+            net_encoder = load_partial_state_dict(net_encoder, state_dict, skip_regex=['fc', 'data.ab'])
         return net_encoder
 
     def build_decoder(self, arch='ppm_deepsup',
                       fc_dim=512, num_class=150,
                       weights='', use_softmax=False):
         arch = arch.lower()
-        if arch == 'c1_deepsup':
+        if arch in ['c1_deepsup', 'c1ds']:
             net_decoder = C1DeepSup(
                 num_class=num_class,
                 fc_dim=fc_dim,
@@ -137,7 +175,7 @@ class ModelBuilder():
                 num_class=num_class,
                 fc_dim=fc_dim,
                 use_softmax=use_softmax)
-        elif arch == 'ppm_deepsup':
+        elif arch in ['ppm_deepsup', 'ppmds']:
             net_decoder = PPMDeepsup(
                 num_class=num_class,
                 fc_dim=fc_dim,
@@ -160,25 +198,70 @@ class ModelBuilder():
         net_decoder.apply(self.weights_init)
         if len(weights) > 0:
             print('Loading weights for net_decoder')
-            net_decoder.load_state_dict(
-                torch.load(weights, map_location=lambda storage, loc: storage), strict=False)
+            state_dict = torch.load(weights, map_location=lambda storage, loc: storage)
+            net_decoder = load_partial_state_dict(net_decoder, state_dict)
         return net_decoder
+
+
+def load_partial_state_dict(model, state_dict, verbose=True,
+                            skip_regex=None,
+                            return_bool=False, dst_prefix='',
+                            dst_key_remove=None, dst_key_replace=None):
+    own_state = model.state_dict()
+    own_state_init = {x: False for x in own_state}
+    if isinstance(skip_regex, str):
+        skip_regex = [skip_regex]
+    for src_name, param in state_dict.items():
+        if skip_regex is not None:
+            skip_copy = False
+            for skip_r in skip_regex:
+                if src_name.find(skip_r) != -1:
+                    skip_copy = True
+            if skip_copy:
+                if verbose:
+                    print('Skipping copy', src_name)
+                continue
+
+        dst_name = src_name
+        if dst_key_remove is not None:
+            dst_name = dst_name.replace(dst_key_remove, '')
+        if dst_key_replace is not None:
+            dst_name = dst_name.replace(dst_key_replace[0], dst_key_replace[1])
+        dst_name = dst_prefix + dst_name
+        if verbose:
+            print('Copying', src_name, param.size(), '=>',
+                  dst_name, own_state[dst_name].size())
+        own_state[dst_name].copy_(param)
+        own_state_init[dst_name] = True
+    if verbose:
+        for name in own_state_init:
+            if own_state_init[name] is True:
+                continue
+            print('Random', name, own_state[name].size())
+    if return_bool:
+        return model, own_state_init
+    else:
+        return model
 
 
 class Resnet(nn.Module):
     def __init__(self, orig_resnet):
         super(Resnet, self).__init__()
+        self.is_pt_resnet = False
+        if isinstance(orig_resnet, PTResNet):
+            self.is_pt_resnet = True
 
         # take pretrained resnet, except AvgPool and FC
         self.conv1 = orig_resnet.conv1
         self.bn1 = orig_resnet.bn1
         self.relu1 = orig_resnet.relu1
-        self.conv2 = orig_resnet.conv2
-        self.bn2 = orig_resnet.bn2
-        self.relu2 = orig_resnet.relu2
-        self.conv3 = orig_resnet.conv3
-        self.bn3 = orig_resnet.bn3
-        self.relu3 = orig_resnet.relu3
+        if not self.is_pt_resnet:
+            self.conv2 = orig_resnet.conv2
+            self.bn2 = orig_resnet.bn2
+            self.relu2 = orig_resnet.relu2
+            self.conv3 = orig_resnet.conv3
+            self.bn3 = orig_resnet.bn3
+            self.relu3 = orig_resnet.relu3
         self.maxpool = orig_resnet.maxpool
         self.layer1 = orig_resnet.layer1
         self.layer2 = orig_resnet.layer2
@@ -189,8 +272,9 @@ class Resnet(nn.Module):
         conv_out = []
 
         x = self.relu1(self.bn1(self.conv1(x)))
-        x = self.relu2(self.bn2(self.conv2(x)))
-        x = self.relu3(self.bn3(self.conv3(x)))
+        if not self.is_pt_resnet:
+            x = self.relu2(self.bn2(self.conv2(x)))
+            x = self.relu3(self.bn3(self.conv3(x)))
         x = self.maxpool(x)
 
         x = self.layer1(x); conv_out.append(x);
@@ -204,8 +288,11 @@ class Resnet(nn.Module):
 
 
 class ResnetDilated(nn.Module):
-    def __init__(self, orig_resnet, dilate_scale=8):
+    def __init__(self, orig_resnet, dilate_scale=8, freeze_until=None):
         super(ResnetDilated, self).__init__()
+        self.is_pt_resnet = False
+        if isinstance(orig_resnet, PTResNet):
+            self.is_pt_resnet = True
         from functools import partial
 
         if dilate_scale == 8:
@@ -221,17 +308,33 @@ class ResnetDilated(nn.Module):
         self.conv1 = orig_resnet.conv1
         self.bn1 = orig_resnet.bn1
         self.relu1 = orig_resnet.relu1
-        self.conv2 = orig_resnet.conv2
-        self.bn2 = orig_resnet.bn2
-        self.relu2 = orig_resnet.relu2
-        self.conv3 = orig_resnet.conv3
-        self.bn3 = orig_resnet.bn3
-        self.relu3 = orig_resnet.relu3
+        if not self.is_pt_resnet:
+            self.conv2 = orig_resnet.conv2
+            self.bn2 = orig_resnet.bn2
+            self.relu2 = orig_resnet.relu2
+            self.conv3 = orig_resnet.conv3
+            self.bn3 = orig_resnet.bn3
+            self.relu3 = orig_resnet.relu3
         self.maxpool = orig_resnet.maxpool
         self.layer1 = orig_resnet.layer1
         self.layer2 = orig_resnet.layer2
         self.layer3 = orig_resnet.layer3
         self.layer4 = orig_resnet.layer4
+        self.freeze_until = freeze_until
+        if freeze_until is not None:
+            assert freeze_until.startswith('layer')
+            self.conv1.weight.requires_grad = False
+            done_freeze = False
+            for idx in range(1, 5):
+                layername = 'layer%d' % (idx)
+                if layername == freeze_until:
+                    done_freeze = True
+                layermod = getattr(self, layername)
+                print("ResNetdilated Freezing %s" % (layername))
+                for m in layermod.parameters():
+                    m.requires_grad = False
+                if done_freeze:
+                    break
 
     def _nostride_dilate(self, m, dilate):
         classname = m.__class__.__name__
@@ -252,8 +355,9 @@ class ResnetDilated(nn.Module):
         conv_out = []
 
         x = self.relu1(self.bn1(self.conv1(x)))
-        x = self.relu2(self.bn2(self.conv2(x)))
-        x = self.relu3(self.bn3(self.conv3(x)))
+        if not self.is_pt_resnet:
+            x = self.relu2(self.bn2(self.conv2(x)))
+            x = self.relu3(self.bn3(self.conv3(x)))
         x = self.maxpool(x)
 
         x = self.layer1(x); conv_out.append(x);
@@ -264,6 +368,48 @@ class ResnetDilated(nn.Module):
         if return_feature_maps:
             return conv_out
         return [x]
+
+    def train(self, mode=True):
+        """
+        Override the default train() to freeze the BN parameters
+        """
+        super(ResnetDilated, self).train(mode)
+        if mode:
+            for m in self.modules():
+                if isinstance(m, ResnetDilated):
+                    continue
+                m.train()
+        else:
+            for m in self.modules():
+                if isinstance(m, ResnetDilated):
+                    continue
+                m.eval()
+            return self
+        if self.freeze_until is None:
+            return self
+        print("Freezing Mean/Var of BatchNorm2D.")
+        print("Freezing Weight/Bias of BatchNorm2D.")
+        assert self.freeze_until.startswith('layer')
+        self.bn1.eval()
+        self.bn1.weight.requires_grad = False
+        self.bn1.bias.requires_grad = False
+        done_freeze = False
+        for idx in range(1, 5):
+            layername = 'layer%d' % (idx)
+            if layername == self.freeze_until:
+                done_freeze = True
+            layermod = getattr(self, layername)
+            print('BN Freeze: %s' % (layername))
+            for m in layermod.modules():
+                if isinstance(m, torch.nn.BatchNorm2d) or \
+                   isinstance(m, SynchronizedBatchNorm2d):
+                    m.eval()
+                    m.weight.requires_grad = False
+                    m.bias.requires_grad = False
+                    print('Setting to eval', m)
+            if done_freeze:
+                break
+        return self
 
 
 class MobileNetV2Dilated(nn.Module):
