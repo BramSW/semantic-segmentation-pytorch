@@ -13,7 +13,7 @@ def round2nearest_multiple(x, p):
     return ((x - 1) // p + 1) * p
 
 
-NYU_ROOT_DIR="/private/home/imisra/projects/self-supervised/semantic-segmentation-pytorch/data/nyuv2"
+NYU_ROOT_DIR="/data/bw462/nyu"
 
 CANDIDATE_PATHS_DICT = {
     'ade': [
@@ -21,19 +21,19 @@ CANDIDATE_PATHS_DICT = {
     ],
 
     'nyuv2sn40': [
-        '/private/home/imisra/projects/self-supervised/semantic-segmentation-pytorch/data/nyuv2/',
+        '/data/bw462/nyu/images/',
    
     ],
 }
 
 SPLIT_LIST_FOLDER_DICT = {
     'ade': './data/ADE20k/',
-    'nyuv2sn40': os.path.join(NYU_ROOT_DIR, 'metadata')
+    'nyuv2sn40': os.path.join(NYU_ROOT_DIR, 'surfacenormal_metadata')
 }
 
 # these are only needed for evaluation
-NYU_NORMALS_FILE = os.path.join(NYU_ROOT_DIR, 'metadata/all_normals.pklz')
-NYU_VOCAB_FILE = os.path.join(NYU_ROOT_DIR, 'metadata/vocab%d.mat')
+NYU_NORMALS_FILE = os.path.join(NYU_ROOT_DIR, 'surfacenormal_metadata/all_normals.pklz')
+NYU_VOCAB_FILE = os.path.join(NYU_ROOT_DIR, 'surfacenormal_metadata/vocab%d.mat')
 
 class PILToTensorTransform(object):
     """

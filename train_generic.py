@@ -42,12 +42,12 @@ def train(segmentation_module, iterator, optimizers, history, epoch, args):
         segmentation_module.zero_grad()
 
         # forward pass
-        # if isinstance(batch_data, list):
-        #     batch_data = batch_data[0]
-        # if not isinstance(segmentation_module, UserScatteredDataParallel) \
-        #    and segmentation_module.encoder.conv1.weight.is_cuda:
-        #     for k in batch_data:
-        #         batch_data[k] = batch_data[k].cuda()
+        if isinstance(batch_data, list):
+            batch_data = batch_data[0]
+        if not isinstance(segmentation_module, UserScatteredDataParallel) \
+           and segmentation_module.encoder.conv1.weight.is_cuda:
+            for k in batch_data:
+                batch_data[k] = batch_data[k].cuda()
         loss, acc = segmentation_module(batch_data)
         loss = loss.mean()
         acc = acc.mean()

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-MGPU=7
+MGPU=0
 FILENAME="train_generic.py"
 
 OUTPUT_FOLDER="output/finetune_model"

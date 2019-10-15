@@ -1,6 +1,6 @@
 #!/bin/bash
 
-MGPU=7
+MGPU=0
 FILENAME="train_generic.py"
 
 
