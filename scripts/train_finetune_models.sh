@@ -7,8 +7,8 @@ OUTPUT_FOLDER="output/finetune_model"
 mkdir -p $OUTPUT_FOLDER
 
 # path to the pretrained weights
-PRETRAINED_MODEL=""
-
+PRETRAINED_MODEL="ae_state_dict.pth"
+# PRETRAINED_MODEL="classifier.pth"
 # Number of epochs is set to 400 so that the learning rate decay scheme does not need to be modified.
 # The model converges within the first 150 epochs.
 
