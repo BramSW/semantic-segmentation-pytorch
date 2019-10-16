@@ -229,8 +229,8 @@ def load_partial_state_dict(model, state_dict, verbose=True,
             dst_name = dst_name.replace(dst_key_replace[0], dst_key_replace[1])
         dst_name = dst_prefix + dst_name
         if verbose:
-            print('Copying', src_name, param.size(), '=>',
-                  dst_name, own_state[dst_name].size())
+            print('Copying', src_name, param.shape, '=>',
+                  dst_name, own_state[dst_name].shape)
         own_state[dst_name].copy_(param)
         own_state_init[dst_name] = True
     if verbose:
