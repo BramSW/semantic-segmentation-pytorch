@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-MGPU=0
+MGPU=1
 FILENAME="train_generic.py"
 
 OUTPUT_FOLDER="output/finetune_model"
@@ -22,5 +22,5 @@ python3 "$FILENAME" \
   --random_flip 0 \
   --freeze_until "layer4" \
   --ckpt "$OUTPUT_FOLDER"  \
-  --epoch_iters 50 \
-  --num_epoch 400
+  --epoch_iters 90 \
+  --num_epoch 150
